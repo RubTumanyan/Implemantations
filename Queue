@@ -1,0 +1,250 @@
+#include <iostream>
+
+
+template<typename T>
+class MyAllocator {
+public:
+    T* allocate(size_t n) {
+        return static_cast<T*>(::operator new(n * sizeof(T)));
+    }
+
+    void deallocate(T* p, size_t) {
+        ::operator delete(p);
+    }
+    template<typename... Args>
+    void construct(T* p , Args&&... args) {
+        ::new(p) T(std::forward<Args>(args)...);
+    }
+
+    void destroy(T* p) {
+        p->~T();
+    }
+};
+
+template<typename T>
+class MyQueue {
+private:
+    MyAllocator<T> alloc;
+    T* data;
+
+    size_t size_;
+    size_t capacity_;
+    size_t back;
+    size_t front;
+
+    void reallocate(size_t n) {
+        T* newData = alloc.allocate(n);
+
+        for (int i = 0; i < size_; i++) {
+            int ind = (front + i ) % capacity_;
+            alloc.construct(newData + i, std::move(data[ind]));
+        }
+
+        for (int i = 0; i < size_; i++) {
+            int ind = (front + i ) % capacity_;
+            alloc.destroy(newData + i);
+        }
+
+        if (data) alloc.deallocate(data, capacity_);
+
+        data = newData;
+        capacity_ = n;
+        front = 0;
+        back = size_;
+    }
+public:
+    MyQueue():data(nullptr) , size_(0), capacity_(0), back(0), front(0) {}
+
+    MyQueue(const MyQueue& rhs) : data(nullptr) , size_(0), capacity_(0), back(0), front(0) {
+        if (rhs.size_  == 0) return;
+
+        capacity_ = rhs.capacity_;
+        size_ = rhs.size_;
+        data = alloc.allocate(rhs.capacity_);
+
+        for (int i = 0; i < rhs.size_; i++) {
+            int ind = (front + i ) % capacity_;
+            alloc.construct(data + i, rhs.data[ind]);
+        }
+        front = 0;
+        back = size_;
+    }
+
+    MyQueue(MyQueue&& rhs) noexcept{
+        front = rhs.front;
+        back = rhs.back;
+        size_ = rhs.size_;
+        capacity_ = rhs.capacity_;
+        data = rhs.data;
+
+        rhs.data = nullptr;
+        rhs.size_ = 0;
+        rhs.capacity_ = 0;
+        rhs.back = 0;
+        rhs.front = 0;
+    }
+
+    MyQueue& operator=(const MyQueue& rhs) {
+        if (this == &rhs) return *this;
+
+        for (int i = 0; i < size_; i++) {
+            int ind = (front + i ) % capacity_;
+            alloc.destroy(data + i);
+        }
+        if (data) alloc.deallocate(data, capacity_);
+        front = 0;
+        capacity_ = 0;
+        back = 0;
+        size_ = 0;
+        data = nullptr;
+
+        if (rhs.size_ == 0) return *this;
+
+        capacity_ = rhs.capacity_;
+        size_ = rhs.size_;
+
+        for (int i = 0; i < rhs.size_; i++) {
+            int ind = (front + i ) % capacity_;
+            alloc.construct(data + i, rhs.data[ind]);
+        }
+        front = 0;
+        back = size_;
+        return *this;
+    }
+
+    MyQueue& operator=(MyQueue&& rhs){
+        if (this == &rhs) return *this;
+
+        for (int i = 0; i < size_; i++) {
+            int ind = (front + i ) % capacity_;
+            alloc.destroy(data + i);
+        }
+        if (data) alloc.deallocate(data, capacity_);
+
+        data = rhs.data;
+        size_ = rhs.size_;
+        capacity_ = rhs.capacity_;
+        back = rhs.back;
+        front = rhs.front;
+
+        rhs.data = nullptr;
+        rhs.capacity_ = 0;
+        rhs.size_ = 0;
+        rhs.back = 0;
+        rhs.front = 0;
+
+        return *this;
+    }
+
+    ~MyQueue() {
+        for (int i = 0; i < size_; i++) {
+            int ind = (front + i ) % capacity_;
+            alloc.destroy(data + i);
+        }
+        if (data) alloc.deallocate(data, capacity_);
+    }
+
+    void push(const T& value) {
+        if (size_ == capacity_) {
+            size_t newCapacity = (capacity_ == 0) ?  1 : capacity_ * 2;
+            reallocate(newCapacity);
+        }
+
+        alloc.construct(data + back ,value);
+
+        back = (back + 1 ) % capacity_;
+        size_++;
+    }
+    void push(T&& value) {
+        if (size_ == capacity_) {
+            size_t newCapacity = (capacity_ == 0) ?  1 : capacity_ * 2;
+            reallocate(newCapacity);
+        }
+        alloc.construct(data + back, std::move(value));
+        back = (back + 1) % capacity_;
+        size_++;
+    }
+
+    bool empty() const {
+        return size_ == 0;
+    }
+    void pop() {
+        if (empty()) throw std::out_of_range("Empty queue");
+
+        alloc.destroy(data + front);
+        size_--;
+        front = (front + 1) % capacity_;
+    }
+
+    T& front_() {
+        if (empty()) throw std::out_of_range("Empty queue");
+        return data[front];
+    }
+    const T& front_() const {
+        if (empty()) throw std::out_of_range("Empty queue");
+        return data[front];
+    }
+
+    T& back_() {
+        if (empty()) throw std::out_of_range("Empty queue");
+        size_t ind = (back == 0) ? capacity_ - 1 : back - 1;
+        return data[ind];
+    }
+
+    const T& back_() const {
+        if (empty()) throw std::out_of_range("Empty queue");
+        size_t ind = (back == 0) ? capacity_ - 1 : back - 1;
+        return data[ind];
+    }
+
+    size_t size() const {
+        return size_;
+    }
+    size_t capacity() const {
+        return capacity_;
+    }
+};
+    int main() {
+        MyQueue<int> q;
+
+        std::cout << "Push 10, 20, 30\n";
+        q.push(10);
+        q.push(20);
+        q.push(30);
+
+        std::cout << "Front: " << q.front_() << "\n";
+        std::cout << "Back: " << q.back_() << "\n";
+        std::cout << "Size: " << q.size() << "\n\n";
+
+        std::cout << "Pop one element\n";
+        q.pop();
+
+        std::cout << "Front: " << q.front_() << "\n";
+        std::cout << "Size: " << q.size() << "\n\n";
+
+        std::cout << "Copy queue\n";
+        MyQueue<int> q2 = q;
+
+        std::cout << "q2 front: " << q2.front_() << "\n";
+        std::cout << "q2 back: " << q2.back_() << "\n";
+
+        std::cout << "\nMove queue\n";
+        MyQueue<int> q3 = std::move(q);
+
+        std::cout << "q3 front: " << q3.front_() << "\n";
+        std::cout << "q3 back: " << q3.back_() << "\n";
+
+        std::cout << "q empty? " << q.empty() << "\n";
+
+        std::cout << "\nPush more into q3\n";
+        q3.push(40);
+        q3.push(50);
+
+        std::cout << "q3 front: " << q3.front_() << "\n";
+        std::cout << "q3 back: " << q3.back_() << "\n";
+        std::cout << "q3 size: " << q3.size() << "\n";
+
+        return 0;
+    }
+
+
