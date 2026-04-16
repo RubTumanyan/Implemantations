@@ -1,0 +1,299 @@
+#include <iostream>
+
+template<typename T>
+class MyAllocator {
+public:
+    T* allocate(size_t n) {
+        return static_cast<T*>(::operator new(n * sizeof(T)));
+    }
+    void deallocate(void* p , size_t) {
+        ::operator delete(p);
+    }
+    template<typename... Args>
+    void construct(void* p, Args&&... arg) {
+        new(p) T(std::forward<Args>(arg)...);
+    }
+
+    void destroy(T* p) {
+        p->~T();
+    }
+};
+
+
+template<typename T>
+class MyVector {
+private:
+    T* data;
+    size_t size_;
+    size_t capacity_;
+    MyAllocator<T> alloc;
+
+    void reallocate(size_t n) {
+        T* newData = alloc.allocate(n);
+
+        // 1. construct into new memory
+        for (size_t i = 0; i < size_; i++) {
+            alloc.construct(newData + i, std::move_if_noexcept(data[i]));
+        }
+
+        // 2. destroy old elements
+        for (size_t i = 0; i < size_; i++) {
+            alloc.destroy(data + i);
+        }
+
+        // 3. free old memory
+        if (data) {
+            alloc.deallocate(data, capacity_);
+        }
+
+        // 4. update pointers
+        data = newData;
+        capacity_ = n;
+    }
+public:
+
+        MyVector():data(nullptr),size_(0) , capacity_(0) {}
+
+        MyVector(size_t n , const T& val = T()):data(nullptr) , size_(0), capacity_(0) {
+            if (n == 0) return;
+            data = alloc.allocate(n);
+            for (int i = 0; i < size_; i++) {
+                alloc.construct(data + i , val);
+            }
+        }
+
+    MyVector(const MyVector& other):data(nullptr) , size_(0), capacity_(0) {
+            if (capacity_ == 0) return;
+
+            data = alloc.allocate(capacity_);
+            for (int i = 0; i < size_; i++) {
+                alloc.construct(data + i , other.data[i]);
+            }
+        }
+    MyVector(MyVector&& other) {
+            data = other.data;
+            size_ = other.size_;
+            capacity_ = other.capacity_;
+
+            other.size_ = 0;
+            other.capacity_ = 0;
+            other.data = nullptr;
+        }
+
+    MyVector& operator=(const MyVector& rhs) {
+            if (this == &rhs) return *this;
+
+            for (int i = 0; i < size_; i++) {
+                alloc.destroy(data + i);
+            }
+            if (data) {
+                alloc.deallocate(data, capacity_);
+            }
+            size_ = rhs.size_;
+            capacity_ = rhs.capacity_;
+            data = nullptr;
+            if (capacity_ == 0) return *this;
+
+            for (int i = 0 ; i < size_ ; i++) {
+                alloc.construct(data + i , rhs.data[i]);
+            }
+            return *this;
+        }
+
+    MyVector& operator=(MyVector&& rhs) {
+            if (&rhs == this) return *this;
+
+            for (int i = 0 ; i < size_ ; i++) {
+                alloc.destroy(data + i);
+            }
+            if (data) {
+                alloc.deallocate(data, capacity_);
+            }
+            size_ = rhs.size_;
+            capacity_ = rhs.capacity_;
+            data = rhs.data;
+            rhs.size_ = 0;
+            rhs.capacity_ = 0;
+            rhs.data = nullptr;
+            return *this;
+        }
+
+    ~MyVector() {
+            for (int i = 0; i < size_; i++) {
+                alloc.destroy(data + i);
+            }
+            if (data) {
+                alloc.deallocate(data, capacity_);
+            }
+        }
+    size_t size() const {
+            return size_;
+        }
+    size_t capacity() const {
+            return capacity_;
+        }
+    bool empty() const {
+            return size_ == 0;
+        }
+
+    T& operator[](size_t i) {
+        return data[i];
+        }
+
+    const T& operator[](size_t i)const {
+        return data[i];
+    }
+
+    T& at(size_t n) {
+            if ( n >= size_  || n < 0 ) throw std::out_of_range("MyVector::at");
+            return data[n];
+        }
+    T& back() {
+            if (empty()) throw std::out_of_range("MyVector::back");
+            return data[size_ - 1];
+        }
+    T& front() {
+            if (empty()) throw std::out_of_range("MyVector::frot");
+            return data[0];
+        }
+    void push_back(const T& val) {
+            if (size_ == capacity_) {
+                size_t newCap = capacity_ == 0 ? 1 : 2 * capacity_;
+                reallocate(newCap);
+            }
+                alloc.construct(data , val);
+                size_++;
+        }
+    void push_back(T&& val) {
+            if (size_ == capacity_) {
+                size_t newCap = capacity_ == 0 ? 1 : 2 * capacity_;
+                reallocate(newCap);
+            }
+            alloc.construct(data + size_, std::move(val));
+            size_++;
+        }
+    void pop_back() {
+            if (empty()) throw std::out_of_range("MyVector::pop_back");
+            size_--;
+            alloc.destroy(data + size_);
+        }
+
+    void clear() {
+            if (size_ == 0) return;
+            for (int i = 0; i < size_; i++) {
+                alloc.destroy(data + i);
+            }
+            size_ = 0;
+        }
+    void resize(size_t n, const T& value = T()) {
+            if (n < size_) {
+                // destroy extra elements
+                for (size_t i = n; i < size_; i++) {
+                    alloc.destroy(data + i);
+                }
+                size_ = n;
+            }
+            else if (n > size_) {
+                if (n > capacity_) {
+                    reallocate(n);
+                }
+
+                // IMPORTANT: construct only from old size to new size
+                for (size_t i = size_; i < n; i++) {
+                    alloc.construct(data + i, value);
+                }
+
+                size_ = n;
+            }
+        }
+            void reserve(int n) {
+                if (n <= capacity_) return;
+                reallocate(n);
+            }
+
+
+};
+
+int main() {
+    std::cout << "=== MyVector test ===\n";
+
+    MyVector<int> v;
+
+    // push_back
+    v.push_back(10);
+    v.push_back(20);
+    v.push_back(30);
+
+    std::cout << "Vector after push_back:\n";
+    for (size_t i = 0; i < v.size(); i++) {
+        std::cout << v[i] << " ";
+    }
+    std::cout << "\n\n";
+
+    // front / back
+    std::cout << "Front: " << v.front() << "\n";
+    std::cout << "Back: " << v.back() << "\n\n";
+
+    // pop_back
+    v.pop_back();
+    std::cout << "After pop_back:\n";
+    for (size_t i = 0; i < v.size(); i++) {
+        std::cout << v[i] << " ";
+    }
+    std::cout << "\n\n";
+
+    // copy constructor
+    MyVector<int> v2 = v;
+    std::cout << "Copied vector v2:\n";
+    for (size_t i = 0; i < v2.size(); i++) {
+        std::cout << v2[i] << " ";
+    }
+    std::cout << "\n\n";
+
+    // move constructor
+    MyVector<int> v3 = std::move(v);
+    std::cout << "Moved vector v3:\n";
+    for (size_t i = 0; i < v3.size(); i++) {
+        std::cout << v3[i] << " ";
+    }
+    std::cout << "\n";
+
+    std::cout << "Original v after move (size): " << v.size() << "\n\n";
+
+    // assignment operator
+    MyVector<int> v4;
+    v4 = v2;
+
+    std::cout << "v4 (copy assigned):\n";
+    for (size_t i = 0; i < v4.size(); i++) {
+        std::cout << v4[i] << " ";
+    }
+    std::cout << "\n\n";
+
+    // move assignment
+    MyVector<int> v5;
+    v5 = std::move(v4);
+
+    std::cout << "v5 (move assigned):\n";
+    for (size_t i = 0; i < v5.size(); i++) {
+        std::cout << v5[i] << " ";
+    }
+    std::cout << "\n";
+
+    std::cout << "v4 after move (size): " << v4.size() << "\n\n";
+
+    // resize
+    v5.resize(5, 100);
+
+    std::cout << "v5 after resize(5,100):\n";
+    for (size_t i = 0; i < v5.size(); i++) {
+        std::cout << v5[i] << " ";
+    }
+    std::cout << "\n\n";
+
+    // reserve
+    v5.reserve(100);
+    std::cout << "capacity after reserve: " << v5.capacity() << "\n";
+
+    return 0;
+}
